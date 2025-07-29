@@ -1,60 +1,47 @@
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from docx import Document
-from fastapi.middleware.cors import CORSMiddleware
 import os
 from datetime import datetime
-import uuid
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Certifique-se que o diretório de laudos existe
+os.makedirs("static/laudos", exist_ok=True)
 
-TEMPLATE_DIR = "templates"
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-class DadosLaudo(BaseModel):
+class LaudoRequest(BaseModel):
     paciente: str
+    data: str
     corpo: str
     conclusao: str
-    solicitante: str = ""
-    data: str
+    solicitante: str = None
 
 @app.post("/gerar-laudo")
-def gerar_laudo(dados: DadosLaudo):
+def gerar_laudo(req: LaudoRequest):
     try:
-        # Seleciona template padrão
-        template_path = os.path.join(TEMPLATE_DIR, "2025 ABDOME TOTAL.docx")
-        if not os.path.exists(template_path):
-            raise HTTPException(status_code=500, detail="Template não encontrado.")
+        document = Document()
+        document.add_heading('Laudo Ultrassonográfico', 0)
 
-        doc = Document(template_path)
+        document.add_paragraph(f"Paciente: {req.paciente}")
+        if req.solicitante:
+            document.add_paragraph(f"Médico Solicitante: {req.solicitante}")
+        document.add_paragraph(f"Data do Exame: {req.data}")
 
-        # Substituições
-        for p in doc.paragraphs:
-            if "{PACIENTE}" in p.text:
-                p.text = p.text.replace("{PACIENTE}", dados.paciente)
-            if "{DATA}" in p.text:
-                p.text = p.text.replace("{DATA}", dados.data)
-            if "{SOLICITANTE}" in p.text:
-                p.text = p.text.replace("{SOLICITANTE}", dados.solicitante)
-            if "{CORPO}" in p.text:
-                p.text = p.text.replace("{CORPO}", dados.corpo)
-            if "{CONCLUSAO}" in p.text:
-                p.text = p.text.replace("{CONCLUSAO}", dados.conclusao)
+        document.add_heading("Achados", level=1)
+        document.add_paragraph(req.corpo)
 
-        filename = f"laudo_{uuid.uuid4().hex[:8]}.docx"
-        output_path = os.path.join("outputs", filename)
-        os.makedirs("outputs", exist_ok=True)
-        doc.save(output_path)
+        document.add_heading("Conclusão", level=1)
+        document.add_paragraph(req.conclusao)
 
-        return FileResponse(output_path, filename=filename)
+        filename = f"Laudo_{req.paciente.replace(' ', '_')}.docx"
+        output_path = f"static/laudos/{filename}"
+        document.save(output_path)
+
+        return {"url": f"https://apidocx.onrender.com/static/laudos/{filename}"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(status_code=500, content={"detail": str(e)})
